@@ -31,18 +31,20 @@ import (
 )
 
 var (
-	flagTag       = flag.String("tags", "", "a space-separated list of build tags to consider satisfied during the build")
-	flagOut       = flag.String("o", "", "output file")
-	flagFunc      = flag.String("func", "", "preferred entry function")
-	flagWork      = flag.Bool("work", false, "don't remove working directory")
-	flagRace      = flag.Bool("race", false, "enable race detector")
-	flagCPU       = flag.Bool("cpuprofile", false, "generate cpu profile in cpu.pprof")
-	flagLibFuzzer = flag.Bool("libfuzzer", false, "output static archive for use with libFuzzer")
+	flagTag                   = flag.String("tags", "", "a space-separated list of build tags to consider satisfied during the build")
+	flagOut                   = flag.String("o", "", "output file")
+	flagFunc                  = flag.String("func", "", "preferred entry function")
+	flagWork                  = flag.Bool("work", false, "don't remove working directory")
+	flagRace                  = flag.Bool("race", false, "enable race detector")
+	flagCPU                   = flag.Bool("cpuprofile", false, "generate cpu profile in cpu.pprof")
+	flagLibFuzzer             = flag.Bool("libfuzzer", false, "output static archive for use with libFuzzer")
+	flagLibFuzzerEx           = flag.Bool("libfuzzer-ex", false, "output static archive for use with libFuzzer")
+	flagLibFuzzerPrefix       = flag.String("libfuzzer-prefix", "", "prefix to exported libFuzzer functions")
 )
 
 func makeTags() string {
 	tags := "gofuzz"
-	if *flagLibFuzzer {
+	if *flagLibFuzzer || *flagLibFuzzerEx {
 		tags += " gofuzz_libfuzzer"
 	}
 	if *flagRace {
@@ -79,7 +81,7 @@ func main() {
 	if *flagFunc != "" && !isFuzzFuncName(*flagFunc) {
 		c.failf("provided -func=%v, but %v is not a fuzz function name", *flagFunc, *flagFunc)
 	}
-	if *flagLibFuzzer && *flagRace {
+	if (*flagLibFuzzer || *flagLibFuzzerEx) && *flagRace {
 		c.failf("-race and -libfuzzer are incompatible")
 	}
 
@@ -94,7 +96,7 @@ func main() {
 
 	if *flagOut == "" {
 		ext := ".zip"
-		if *flagLibFuzzer {
+		if *flagLibFuzzer || *flagLibFuzzerEx {
 			ext = ".a"
 		}
 		*flagOut = c.pkgs[0].Name + "-fuzz" + ext
@@ -119,7 +121,7 @@ func main() {
 	lits := c.gatherLiterals()
 	var blocks, sonar []CoverBlock
 
-	if *flagLibFuzzer {
+	if *flagLibFuzzer || *flagLibFuzzerEx {
 		archive := c.buildInstrumentedBinary(&blocks, nil)
 		c.moveFile(archive, *flagOut)
 		return
@@ -264,7 +266,7 @@ func (c *Context) loadPkg(pkg string) {
 	// * go-fuzz-dep, since we use it for instrumentation
 	// * reflect, if we are using libfuzzer, since its generated main function requires it
 	loadpkgs := []string{pkg, "github.com/dvyukov/go-fuzz/go-fuzz-dep"}
-	if *flagLibFuzzer {
+	if *flagLibFuzzer || *flagLibFuzzerEx {
 		loadpkgs = append(loadpkgs, "reflect")
 	}
 	initial, err := packages.Load(cfg, loadpkgs...)
@@ -332,7 +334,7 @@ func (c *Context) loadPkg(pkg string) {
 		//   ...for libfuzzer, that's not fine, as there is no way to specify one later.
 		if len(c.allFuncs) == 1 {
 			*flagFunc = c.allFuncs[0]
-		} else if *flagLibFuzzer {
+		} else if *flagLibFuzzer || *flagLibFuzzerEx {
 			c.failf("must specify a fuzz function with -libfuzzer, found: %v", strings.Join(c.allFuncs, ", "))
 		}
 	}
@@ -341,7 +343,11 @@ func (c *Context) loadPkg(pkg string) {
 // isFuzzSig reports whether sig is of the form
 //   func FuzzFunc(data []byte) int
 func isFuzzSig(sig *types.Signature) bool {
-	return tupleHasTypes(sig.Params(), "[]byte") && tupleHasTypes(sig.Results(), "int")
+    if *flagLibFuzzerEx {
+        return tupleHasTypes(sig.Params(), "[]byte") && tupleHasTypes(sig.Results(), "[]byte")
+    } else {
+        return tupleHasTypes(sig.Params(), "[]byte") && tupleHasTypes(sig.Results(), "int")
+    }
 }
 
 // tupleHasTypes reports whether tuple is composed of
@@ -429,7 +435,7 @@ func (c *Context) populateWorkdir() {
 
 	// TODO: See if we can avoid making toolchain copies,
 	// using some combination of env vars and toolexec.
-	if *flagLibFuzzer || *flagRace {
+	if *flagLibFuzzer || *flagLibFuzzerEx || *flagRace {
 		c.copyDir(filepath.Join(c.GOROOT, "src", "runtime", "cgo"), filepath.Join(c.workdir, "goroot", "src", "runtime", "cgo"))
 	}
 	if *flagRace {
@@ -478,7 +484,7 @@ func (c *Context) buildInstrumentedBinary(blocks *[]CoverBlock, sonar *[]CoverBl
 	if *flagRace {
 		args = append(args, "-race")
 	}
-	if *flagLibFuzzer {
+	if *flagLibFuzzer || *flagLibFuzzerEx {
 		args = append(args, "-buildmode=c-archive")
 	}
 	if c.cmdGoHasTrimPath {
@@ -567,10 +573,10 @@ func (c *Context) copyFuzzDep() {
 
 func (c *Context) funcMain() []byte {
 	t := mainSrc
-	if *flagLibFuzzer {
+	if *flagLibFuzzer || *flagLibFuzzerEx {
 		t = mainSrcLibFuzzer
 	}
-	dot := map[string]interface{}{"Pkg": c.fuzzpkg.PkgPath, "AllFuncs": c.allFuncs, "DefaultFunc": *flagFunc}
+    dot := map[string]interface{}{"Pkg": c.fuzzpkg.PkgPath, "AllFuncs": c.allFuncs, "DefaultFunc": *flagFunc, "libFuzzerPrefix": *flagLibFuzzerPrefix, "libFuzzerEx": *flagLibFuzzerEx}
 	buf := new(bytes.Buffer)
 	if err := t.Execute(buf, dot); err != nil {
 		c.failf("could not execute template: %v", err)
@@ -804,17 +810,31 @@ import (
 // #else
 // #error Currently only Linux is supported
 // #endif
-// unsigned char GoFuzzCoverageCounters[65536];
+// unsigned char {{.libFuzzerPrefix}}GoFuzzCoverageCounters[65536];
 import "C"
 
-//export LLVMFuzzerInitialize
-func LLVMFuzzerInitialize(argc uintptr, argv uintptr) int {
-	dep.Initialize(unsafe.Pointer(&C.GoFuzzCoverageCounters[0]), 65536)
+//export {{.libFuzzerPrefix}}LLVMFuzzerInitialize
+func {{.libFuzzerPrefix}}LLVMFuzzerInitialize(argc uintptr, argv uintptr) int {
+	dep.Initialize(unsafe.Pointer(&C.{{.libFuzzerPrefix}}GoFuzzCoverageCounters[0]), 65536)
 	return 0
 }
 
-//export LLVMFuzzerTestOneInput
-func LLVMFuzzerTestOneInput(data uintptr, size uint64) int {
+var g_return_data = make([]byte, 0);
+
+{{if $.libFuzzerEx}}
+//export {{.libFuzzerPrefix}}get_return_size
+func {{.libFuzzerPrefix}}get_return_size() int {
+    return len(g_return_data)
+}
+
+//export {{.libFuzzerPrefix}}get_return_data
+func {{.libFuzzerPrefix}}get_return_data(return_data []byte) {
+    copy(return_data, g_return_data)
+}
+{{end}}
+
+//export {{.libFuzzerPrefix}}LLVMFuzzerTestOneInput
+func {{.libFuzzerPrefix}}LLVMFuzzerTestOneInput(data uintptr, size uint64) int {
 	sh := &reflect.SliceHeader{
 	    Data: data,
 	    Len:  int(size),
@@ -822,7 +842,11 @@ func LLVMFuzzerTestOneInput(data uintptr, size uint64) int {
 	}
 
 	input := *(*[]byte)(unsafe.Pointer(sh))
+{{if $.libFuzzerEx}}
+	g_return_data = target.{{.DefaultFunc}}(input)
+{{else}}
 	target.{{.DefaultFunc}}(input)
+{{end}}
 
 	return 0
 }
