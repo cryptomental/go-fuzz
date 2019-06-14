@@ -851,6 +851,14 @@ func {{.libFuzzerPrefix}}LLVMFuzzerTestOneInput(data uintptr, size uint64) int {
 	return 0
 }
 
+//export {{.libFuzzerPrefix}}ForgetCoverage
+func {{.libFuzzerPrefix}}ForgetCoverage() {
+    CoverTab := (*[65536]byte)(unsafe.Pointer(&C.{{.libFuzzerPrefix}}GoFuzzCoverageCounters[0]))
+    for i := 0; i < 65536; i++ {
+        CoverTab[i] = 0
+    }
+}
+
 func main() {
 }
 `))
