@@ -39,6 +39,7 @@ var (
 	flagCPU                   = flag.Bool("cpuprofile", false, "generate cpu profile in cpu.pprof")
 	flagLibFuzzer             = flag.Bool("libfuzzer", false, "output static archive for use with libFuzzer")
 	flagLibFuzzerEx           = flag.Bool("libfuzzer-ex", false, "output static archive for use with libFuzzer")
+	flagLibFuzzerCShared      = flag.Bool("libfuzzer-cshared", false, "output shared archive for use with libFuzzer")
 	flagLibFuzzerPrefix       = flag.String("libfuzzer-prefix", "", "prefix to exported libFuzzer functions")
 )
 
@@ -485,7 +486,11 @@ func (c *Context) buildInstrumentedBinary(blocks *[]CoverBlock, sonar *[]CoverBl
 		args = append(args, "-race")
 	}
 	if *flagLibFuzzer || *flagLibFuzzerEx {
-		args = append(args, "-buildmode=c-archive")
+		if *flagLibFuzzerCShared {
+			args = append(args, "-buildmode=c-shared")
+		} else {
+			args = append(args, "-buildmode=c-archive")
+		}
 	}
 	if c.cmdGoHasTrimPath {
 		args = append(args, "-trimpath")
@@ -493,6 +498,7 @@ func (c *Context) buildInstrumentedBinary(blocks *[]CoverBlock, sonar *[]CoverBl
 	args = append(args, "-o", outf, mainPkg)
 	cmd := exec.Command("go", args...)
 	cmd.Env = append(os.Environ(),
+		"CGO_LDFLAGS_ALLOW=-Wl,-Bsymbolic",
 		"GOROOT="+filepath.Join(c.workdir, "goroot"),
 		"GOPATH="+filepath.Join(c.workdir, "gopath"),
 		"GO111MODULE=off", // temporary measure until we have proper module support
@@ -804,7 +810,8 @@ import (
 	dep "go-fuzz-dep"
 )
 
-// #cgo CFLAGS: -Wall -Werror
+// #cgo CFLAGS: -Wall -Werror -fPIC
+// #cgo LDFLAGS: -Wl,-Bsymbolic
 // #ifdef __linux__
 // __attribute__((weak, section("__libfuzzer_extra_counters")))
 // #else
