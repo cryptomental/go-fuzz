@@ -26,21 +26,22 @@ import (
 //go:generate rm go-bindata-assetfs
 
 var (
-	flagWorkdir       = flag.String("workdir", ".", "dir with persistent work data")
-	flagProcs         = flag.Int("procs", runtime.NumCPU(), "parallelism level")
-	flagTimeout       = flag.Int("timeout", 10, "test timeout, in seconds")
-	flagMinimize      = flag.Duration("minimize", 1*time.Minute, "time limit for input minimization")
-	flagCoordinator   = flag.String("coordinator", "", "coordinator mode (value is coordinator address)")
-	flagWorker        = flag.String("worker", "", "worker mode (value is coordinator address)")
-	flagBin           = flag.String("bin", "", "test binary built with go-fuzz-build")
-	flagFunc          = flag.String("func", "", "function to fuzz")
-	flagDumpCover     = flag.Bool("dumpcover", false, "dump coverage profile into workdir")
-	flagDup           = flag.Bool("dup", false, "collect duplicate crashers")
-	flagTestOutput    = flag.Bool("testoutput", false, "print test binary output to stdout (for debugging only)")
-	flagCoverCounters = flag.Bool("covercounters", true, "use coverage hit counters")
-	flagSonar         = flag.Bool("sonar", true, "use sonar hints")
-	flagV             = flag.Int("v", 0, "verbosity level")
-	flagHTTP          = flag.String("http", "", "HTTP server listen address (coordinator mode only)")
+	flagWorkdir           = flag.String("workdir", ".", "dir with persistent work data")
+	flagProcs             = flag.Int("procs", runtime.NumCPU(), "parallelism level")
+	flagTimeout           = flag.Int("timeout", 10, "test timeout, in seconds")
+	flagMinimize          = flag.Duration("minimize", 1*time.Minute, "time limit for input minimization")
+	flagCoordinator       = flag.String("coordinator", "", "coordinator mode (value is coordinator address)")
+	flagWorker            = flag.String("worker", "", "worker mode (value is coordinator address)")
+	flagConnectionTimeout = flag.Duration("connectiontimeout", 1*time.Minute, "time limit for worker to try to connect coordinator")
+	flagBin               = flag.String("bin", "", "test binary built with go-fuzz-build")
+	flagFunc              = flag.String("func", "", "function to fuzz")
+	flagDumpCover         = flag.Bool("dumpcover", false, "dump coverage profile into workdir")
+	flagDup               = flag.Bool("dup", false, "collect duplicate crashers")
+	flagTestOutput        = flag.Bool("testoutput", false, "print test binary output to stdout (for debugging only)")
+	flagCoverCounters     = flag.Bool("covercounters", true, "use coverage hit counters")
+	flagSonar             = flag.Bool("sonar", true, "use sonar hints")
+	flagV                 = flag.Int("v", 0, "verbosity level")
+	flagHTTP              = flag.String("http", "", "HTTP server listen address (coordinator mode only)")
 
 	shutdown        uint32
 	shutdownC       = make(chan struct{})
@@ -99,7 +100,10 @@ func main() {
 			// Try the default. Best effort only.
 			var bin string
 			cfg := new(packages.Config)
-			cfg.Env = append(os.Environ(), "GO111MODULE=off")
+			// Note that we do not set GO111MODULE here in order to respect any GO111MODULE 
+			// setting by the user as we are finding dependencies. See modules support 
+			// comments in go-fuzz-build/main.go for more details.
+			cfg.Env = os.Environ()
 			pkgs, err := packages.Load(cfg, ".")
 			if err == nil && len(pkgs) == 1 {
 				bin = pkgs[0].Name + "-fuzz.zip"

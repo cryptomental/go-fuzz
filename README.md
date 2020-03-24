@@ -5,15 +5,8 @@ Fuzzing is mainly applicable to packages that parse complex inputs (both text
 and binary), and is especially useful for hardening of systems that parse inputs
 from potentially malicious users (e.g. anything accepted over a network).
 
-## History rewrite
-
-go-fuzz repository history was recently rewritten to exclude examples directory
-to reduce total repository size and download time (see
-[#88](https://github.com/dvyukov/go-fuzz/issues/88),
-[#114](https://github.com/dvyukov/go-fuzz/issues/114) and
-https://github.com/dvyukov/go-fuzz-corpus). Unfortunately, that means that
-`go get -u` command will fail if you had a previous version installed.
-Please remove $GOPATH/github.com/dvyukov/go-fuzz before running `go get` again.
+**Note:** go-fuzz has recently added preliminary support for fuzzing [Go Modules](github.com/golang/go/wiki/Modules).  See the [section below](https://github.com/dvyukov/go-fuzz/blob/master/README.md#modules-support) for more details. 
+If you encounter a problem with modules, please file an issue with details. A workaround might be to disable modules via `export GO111MODULE=off`.
 
 ## Usage
 
@@ -94,8 +87,8 @@ Put the initial corpus into the workdir/corpus directory (in our case
 Consider committing the generated inputs to your source control system, this
 will allow you to restart go-fuzz without losing previous work.
 
-Examples directory contains a bunch of examples of test functions and initial
-input corpuses for various packages.
+The [go-fuzz-corpus repository](https://github.com/dvyukov/go-fuzz-corpus) contains 
+a bunch of examples of test functions and initial input corpuses for various packages.
 
 The next step is to get go-fuzz:
 
@@ -111,9 +104,6 @@ $ cd png
 $ go-fuzz-build
 ```
 This will produce png-fuzz.zip archive.
-
-Note that go-fuzz [does not support modules yet](https://github.com/dvyukov/go-fuzz/issues/195).
-`go-fuzz-build` disables modules by setting environment variable `GO111MODULE=off` during the build.
 
 Now we are ready to go:
 ```
@@ -146,12 +136,23 @@ value should be less than ~5000, otherwise fuzzer can miss new interesting input
 due to hash collisions. And finally ```uptime``` is uptime of the process. This same
 information is also served via http (see the ```-http``` flag).
 
+## Modules support
+
+go-fuzz has preliminary support for fuzzing [Go Modules](github.com/golang/go/wiki/Modules). 
+go-fuzz respects the standard `GO111MODULE` environment variable, which can be set to `on`, `off`, or `auto`. 
+
+go-fuzz-build will add a `require` for `github.com/dvyukov/go-fuzz` to your go.mod. If desired, you may remove this once the build is complete.
+
+Vendoring with modules is not yet supported. A `vendor` directory will be ignored, and go-fuzz will report an error if `GOFLAGS=-mod=vendor` is set.
+
+Note that while modules are used to prepare the build, the final instrumented build is still done in GOPATH mode.
+For most modules, this should not matter.
 
 ## libFuzzer support
 
 go-fuzz-build can also generate an archive file
 that can be used with [libFuzzer](https://llvm.org/docs/LibFuzzer.html)
-instead of go-fuzz. (Requires linux.)
+instead of go-fuzz (requires linux).
 
 Sample usage:
 
@@ -165,7 +166,16 @@ $ ./fmt.libfuzzer
 When run with `-libfuzzer`, go-fuzz-build adds the additional build tag
 `gofuzz_libfuzzer` when building code.
 
-### Random Notes
+## Continuous Fuzzing
+
+Just as unit-testing, fuzzing is better done continuously.
+
+Currently there are 2 services that offer continuous fuzzing based on go-fuzz:
+
+- [fuzzit.dev](https://fuzzit.dev/) ([tutorial](https://github.com/fuzzitdev/example-go))
+- [fuzzbuzz.io](https://fuzzbuzz.io/) ([tutorial](https://docs.fuzzbuzz.io/getting-started/find-your-first-bug-in-go))
+
+## Random Notes
 
 go-fuzz-build builds the program with gofuzz build tag, this allows to put the
 Fuzz function implementation directly into the tested package, but exclude it
@@ -193,6 +203,16 @@ $ go-fuzz -bin=./png-fuzz.zip -worker=127.0.0.1:8745 -procs=10
 - [Automated Testing with go-fuzz](https://speakerdeck.com/filosottile/automated-testing-with-go-fuzz)
 - [Going down the rabbit hole with go-fuzz](https://mijailovic.net/2017/07/29/go-fuzz/)
 - [Fuzzing markdown parser with go-fuzz](https://blog.kowalczyk.info/article/n/fuzzing-markdown-parser-written-in-go.html)
+
+## History rewrite
+
+go-fuzz repository history was recently rewritten to exclude examples directory
+to reduce total repository size and download time (see
+[#88](https://github.com/dvyukov/go-fuzz/issues/88),
+[#114](https://github.com/dvyukov/go-fuzz/issues/114) and
+https://github.com/dvyukov/go-fuzz-corpus). Unfortunately, that means that
+`go get -u` command will fail if you had a previous version installed.
+Please remove $GOPATH/github.com/dvyukov/go-fuzz before running `go get` again.
 
 ## Credits and technical details
 
@@ -584,5 +604,24 @@ by go-fuzz are inspired by work done by Mateusz Jurczyk, Gynvael Coldwind and
 - [github.com/francoispqt/gojay: panic on malformed JSON floats](https://github.com/francoispqt/gojay/issues/32) **fixed**
 - [github.com/eapache/go-xerial-snappy multiple panics with malformed inputs](https://github.com/eapache/go-xerial-snappy/commit/58803384a8be76cd0f84789b302c7b52d791d95f) **fixed**
 - [github.com/trustelem/zxcvbn: multiple panics in password strength estimator](https://github.com/trustelem/zxcvbn/issues/1) **fixed**
+- https://github.com/google/syzkaller: 6 crashers (
+[1](https://github.com/google/syzkaller/commit/7c7ded697e6322b0975f061b7e268fe44f585dab),
+[2](https://github.com/google/syzkaller/commit/3b37734422dc0cb40100287bbb3628d8d946c271),
+[3](https://github.com/google/syzkaller/commit/f400a0da0fcd3e4d27d915b57c54f504813ef1d3),
+[4](https://github.com/google/syzkaller/commit/967dc02d70f8e3d027738295977762cd4fbed5c7),
+[5](https://github.com/google/syzkaller/commit/78b7ec0fbe23a5c674401123053d6372ea3ca9c6),
+[6](https://github.com/google/syzkaller/commit/413e41473838fb74ccc081784afd6ddbbd44b797))
+- [github.com/chai2010/guetzli-go: index out of range](https://github.com/chai2010/guetzli-go/issues/11)
+- [github.com/pixiv/go-libjpeg: segmentation violation (1)](https://github.com/pixiv/go-libjpeg/issues/51) **fixed**
+- [github.com/pixiv/go-libjpeg: segmentation violation (2)](https://github.com/pixiv/go-libjpeg/issues/58)
+- [github.com/pixiv/go-libjpeg: panic on encoding after decoding](https://github.com/pixiv/go-libjpeg/issues/55) **fixed**
+- [github.com/z7zmey/php-parser: index out of range and nil pointer dereference](https://github.com/z7zmey/php-parser/issues/98)
+- [github.com/uber/makisu: index out of range (1)](https://github.com/uber/makisu/issues/266) **fixed**
+- [github.com/uber/makisu: index out of range (2)](https://github.com/uber/makisu/issues/271)
+- [github.com/google/go-attestation: out of memory](https://github.com/google/go-attestation/issues/126) **fixed**
+- [github.com/buger/jsonparser index out of range](https://github.com/buger/jsonparser/issues/178)
+- [github.com/buger/jsonparser infinite loop](https://github.com/buger/jsonparser/issues/179)
+- [github.com/hjson/hjson-go: panic on nil](https://github.com/hjson/hjson-go/issues/16) **fixed**
+- [github.com/hjson/hjson-go: panic on invalid syntax](https://github.com/hjson/hjson-go/issues/17) **fixed**
 
 **If you find some bugs with go-fuzz and are comfortable with sharing them, I would like to add them to this list.** Please either send a pull request for README.md (preferable) or file an issue. If the source code is closed, you can say just "found N bugs in project X". Thank you.

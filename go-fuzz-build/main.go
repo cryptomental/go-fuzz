@@ -41,6 +41,8 @@ var (
 	flagLibFuzzerEx           = flag.Bool("libfuzzer-ex", false, "output static archive for use with libFuzzer")
 	flagLibFuzzerCShared      = flag.Bool("libfuzzer-cshared", false, "output shared archive for use with libFuzzer")
 	flagLibFuzzerPrefix       = flag.String("libfuzzer-prefix", "", "prefix to exported libFuzzer functions")
+	flagBuildX                = flag.Bool("x", false, "print the commands if build fails")
+	flagPreserve              = flag.String("preserve", "", "a comma-separated list of import paths not to instrument")
 )
 
 func makeTags() string {
@@ -61,8 +63,31 @@ func makeTags() string {
 // that clients can then modify and use for calls to go/packages.
 func basePackagesConfig() *packages.Config {
 	cfg := new(packages.Config)
-	cfg.Env = append(os.Environ(), "GO111MODULE=off")
+
+	// Note that we do not set GO111MODULE here in order to respect any GO111MODULE
+	// setting by the user as we are finding dependencies. Note, however, that 
+	// we are still setting up a GOPATH to build, so we later will force 
+	// GO111MODULE to be off when building so that we are in GOPATH mode.
+	// If the user has not set GO111MODULE, the meaning here is
+	// left up to cmd/go (defaulting to 'auto' in Go 1.11-1.13,
+	// but likely defaulting to 'on' at some point during Go 1.14
+	// development cycle).
+	// Also note that we are leaving the overall cfg structure
+	// in place to support future experimentation, etc.
+	cfg.Env = os.Environ()
 	return cfg
+}
+
+// checkModVendor reports if the GOFLAGS env variable
+// contains -mod=vendor, which enables vendoring for modules.
+func checkModVendor() bool {
+	val := os.Getenv("GOFLAGS")
+	for _, s := range strings.Split(val, " ") {
+		if s == "-mod=vendor" {
+			return true
+		}
+	}
+	return false
 }
 
 // main copies the package with all dependent packages into a temp dir,
@@ -84,6 +109,12 @@ func main() {
 	}
 	if (*flagLibFuzzer || *flagLibFuzzerEx) && *flagRace {
 		c.failf("-race and -libfuzzer are incompatible")
+	}
+	if checkModVendor() {
+		// We don't support -mod=vendor with modules.
+		// Part of the issue is go-fuzz-dep and go-fuzz-defs
+		// won't be in the user's vendor directory.
+		c.failf("GOFLAGS with -mod=vendor is not supported")
 	}
 
 	c.startProfiling()  // start pprof as requested
@@ -248,6 +279,9 @@ func (c *Context) loadPkg(pkg string) {
 			paths[i] = p.PkgPath
 		}
 		c.failf("cannot build multiple packages, but %q resolved to: %v", pkg, strings.Join(paths, ", "))
+	}
+	if respkgs[0].Name == "main" {
+		c.failf("cannot fuzz package main")
 	}
 	pkgpath := respkgs[0].PkgPath
 
@@ -482,6 +516,13 @@ func (c *Context) buildInstrumentedBinary(blocks *[]CoverBlock, sonar *[]CoverBl
 	mainPkg := c.createFuzzMain()
 	outf := c.tempFile()
 	args := []string{"build", "-tags", makeTags()}
+	if *flagBuildX {
+		args = append(args, "-x")
+
+		if *flagWork {
+			args = append(args, "-work")
+		}
+	}
 	if *flagRace {
 		args = append(args, "-race")
 	}
@@ -497,11 +538,14 @@ func (c *Context) buildInstrumentedBinary(blocks *[]CoverBlock, sonar *[]CoverBl
 	}
 	args = append(args, "-o", outf, mainPkg)
 	cmd := exec.Command("go", args...)
+
+	// We are constructing a GOPATH environment, so while building
+	// we force GOPATH mode here via GO111MODULE=off.
 	cmd.Env = append(os.Environ(),
 		"CGO_LDFLAGS_ALLOW=-Wl,-Bsymbolic",
 		"GOROOT="+filepath.Join(c.workdir, "goroot"),
 		"GOPATH="+filepath.Join(c.workdir, "gopath"),
-		"GO111MODULE=off", // temporary measure until we have proper module support
+		"GO111MODULE=off",
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		c.failf("failed to execute go build: %v\n%v", err, string(out))
@@ -527,6 +571,12 @@ func (c *Context) calcIgnore() {
 		c.ignore[p.PkgPath] = true
 		return true
 	}, nil)
+
+	// Ignore any packages requested explicitly by the user.
+	paths := strings.Split(*flagPreserve, ",")
+	for _, path := range paths {
+		c.ignore[path] = true
+	}
 }
 
 func (c *Context) gatherLiterals() map[Literal]struct{} {
